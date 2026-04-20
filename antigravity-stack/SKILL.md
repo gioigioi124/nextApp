@@ -1,19 +1,23 @@
 ---
 name: antigravity-stack
 description: >
-  Hướng dẫn chính xác cho dự án Antigravity sử dụng Next.js 14 (App Router) + NestJS + Supabase.
+  Hướng dẫn chính xác cho dự án Antigravity sử dụng Next.js 16 (App Router) + NestJS + Supabase.
   Dùng skill này mỗi khi làm việc với bất kỳ phần nào của dự án Antigravity: tạo page, component,
   module NestJS, API endpoint, auth, database schema, hoặc kết nối frontend-backend.
   LUÔN dùng skill này khi user nhắc đến "antigravity", "web bán hàng", Next.js App Router, NestJS modules,
   Supabase schema, hoặc bất kỳ file nào trong cấu trúc thư mục dự án này.
 ---
 
-# Antigravity Stack — Next.js 14 + NestJS + Supabase
+# Antigravity Stack — Next.js 16 + NestJS + Supabase
+
+> **Docs tham khảo chính thức:** https://nextjs.org/docs (Next.js 16)
+> Khi cần tra cứu API, luôn dùng docs v16. KHÔNG dùng patterns từ Next.js 13/14/15.
 
 ## Tổng quan dự án
 
 Web bán hàng (e-commerce) với:
-- **Frontend**: Next.js 14 App Router, TypeScript, Tailwind CSS, shadcn/ui
+
+- **Frontend**: Next.js 16 App Router, TypeScript, Tailwind CSS, shadcn/ui
 - **Backend**: NestJS, Prisma ORM, JWT Auth
 - **Database**: Supabase (PostgreSQL + Auth + Storage + Realtime)
 - **Cache**: Redis (sessions, cart)
@@ -22,7 +26,17 @@ Web bán hàng (e-commerce) với:
 
 ---
 
-## NEXT.JS — Quy tắc bắt buộc
+## NEXT.JS 16 — Quy tắc bắt buộc
+
+### ⚠️ Breaking changes v16 (KHÔNG dùng patterns cũ)
+
+| Cũ (v14/v15)                           | Mới (v16)                            |
+| -------------------------------------- | ------------------------------------ |
+| `middleware.ts`                        | `proxy.ts` — đổi tên file + function |
+| `export function middleware`           | `export default function proxy`      |
+| `next: { revalidate: 60 }` trong fetch | `'use cache'` directive              |
+| `--turbopack` flag                     | Turbopack mặc định, không cần flag   |
+| `experimental.ppr`                     | Cache Components với `'use cache'`   |
 
 ### App Router (KHÔNG dùng Pages Router)
 
@@ -59,91 +73,119 @@ app/
 // ✅ Server Component (default) — fetch data trực tiếp
 // app/(shop)/products/page.tsx
 export default async function ProductsPage() {
-  const products = await fetch(`${process.env.API_URL}/products`).then(r => r.json())
-  return <ProductList products={products} />
+  const products = await fetch(`${process.env.API_URL}/products`).then((r) =>
+    r.json(),
+  );
+  return <ProductList products={products} />;
 }
 
 // ✅ Client Component — cần interactivity
 // components/cart/AddToCartButton.tsx
-'use client'
-import { useCartStore } from '@/store/cart.store'
+("use client");
+import { useCartStore } from "@/store/cart.store";
 export function AddToCartButton({ product }: { product: Product }) {
-  const addItem = useCartStore(s => s.addItem)
-  return <button onClick={() => addItem(product)}>Thêm vào giỏ</button>
+  const addItem = useCartStore((s) => s.addItem);
+  return <button onClick={() => addItem(product)}>Thêm vào giỏ</button>;
 }
 ```
 
 **Quy tắc:** Chỉ thêm `'use client'` khi cần useState, useEffect, event handlers, hoặc browser APIs.
 
-### Data Fetching pattern
+### Data Fetching pattern (Next.js 16)
 
 ```tsx
-// Fetch trong Server Component (recommended)
+// ✅ Cache với 'use cache' directive (v16) — KHÔNG dùng next: { revalidate }
+import { unstable_cacheTag as cacheTag } from "next/cache";
+
 async function getProduct(slug: string) {
-  const res = await fetch(`${process.env.API_URL}/products/${slug}`, {
-    next: { revalidate: 60 }, // ISR: revalidate mỗi 60s
-  })
-  if (!res.ok) notFound()
-  return res.json()
+  "use cache";
+  cacheTag(`product-${slug}`); // revalidate theo tag
+
+  const res = await fetch(`${process.env.API_URL}/products/${slug}`);
+  if (!res.ok) notFound();
+  return res.json();
 }
 
-// Client-side với TanStack Query
-'use client'
-import { useQuery } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+// ✅ Dynamic (không cache) — mặc định trong v16
+async function getOrders(userId: string) {
+  // không có 'use cache' = luôn fetch mới tại request time
+  const res = await fetch(`${process.env.API_URL}/orders?userId=${userId}`);
+  return res.json();
+}
+
+// ✅ Cache cả component
+async function ProductList() {
+  "use cache";
+  const products = await getProducts();
+  return (
+    <ul>
+      {products.map((p) => (
+        <li key={p.id}>{p.name}</li>
+      ))}
+    </ul>
+  );
+}
+
+// ✅ Client-side với TanStack Query (không đổi)
+("use client");
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 export function useProducts(params: ProductQueryParams) {
   return useQuery({
-    queryKey: ['products', params],
-    queryFn: () => api.get('/products', { params }).then(r => r.data),
-  })
+    queryKey: ["products", params],
+    queryFn: () => api.get("/products", { params }).then((r) => r.data),
+  });
 }
 ```
 
-### Middleware — Route Protection
+### proxy.ts — Route Protection (Next.js 16)
+
+> **v16:** `middleware.ts` đã deprecated. Dùng `proxy.ts` với `export default function proxy`.
+> Runtime là Node.js (không phải Edge). Đổi tên file + function, logic giữ nguyên.
 
 ```ts
-// middleware.ts (root level)
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+// proxy.ts (root level, KHÔNG phải middleware.ts)
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
-export function middleware(request: NextRequest) {
-  const token = request.cookies.get('access_token')?.value
-  const isAdminRoute = request.nextUrl.pathname.startsWith('/admin')
-  const isAccountRoute = request.nextUrl.pathname.startsWith('/account')
+export default function proxy(request: NextRequest) {
+  const token = request.cookies.get("access_token")?.value;
+  const isAdminRoute = request.nextUrl.pathname.startsWith("/admin");
+  const isAccountRoute = request.nextUrl.pathname.startsWith("/account");
 
   if ((isAdminRoute || isAccountRoute) && !token) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    return NextResponse.redirect(new URL("/login", request.url));
   }
-  return NextResponse.next()
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/admin/:path*', '/account/:path*', '/checkout'],
-}
+  matcher: ["/admin/:path*", "/account/:path*", "/checkout"],
+};
 ```
 
 ### API Client (lib/api.ts)
 
 ```ts
 // lib/api.ts
-import axios from 'axios'
+import axios from "axios";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL,
   withCredentials: true,
-})
+});
 
 api.interceptors.response.use(
-  res => res,
-  async error => {
+  (res) => res,
+  async (error) => {
     if (error.response?.status === 401) {
       // refresh token logic
-      window.location.href = '/login'
+      window.location.href = "/login";
     }
-    return Promise.reject(error)
-  }
-)
+    return Promise.reject(error);
+  },
+);
 ```
 
 ### Environment Variables
@@ -209,10 +251,10 @@ src/
 
 ```ts
 // products.module.ts
-import { Module } from '@nestjs/common'
-import { ProductsController } from './products.controller'
-import { ProductsService } from './products.service'
-import { PrismaModule } from 'src/prisma/prisma.module'
+import { Module } from "@nestjs/common";
+import { ProductsController } from "./products.controller";
+import { ProductsService } from "./products.service";
+import { PrismaModule } from "src/prisma/prisma.module";
 
 @Module({
   imports: [PrismaModule],
@@ -227,33 +269,42 @@ export class ProductsModule {}
 
 ```ts
 // products.controller.ts
-import { Controller, Get, Post, Body, Param, Query, UseGuards, ParseIntPipe } from '@nestjs/common'
-import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard'
-import { RolesGuard } from 'src/common/guards/roles.guard'
-import { Roles } from 'src/common/decorators/roles.decorator'
-import { ProductsService } from './products.service'
-import { CreateProductDto } from './dto/create-product.dto'
-import { QueryProductDto } from './dto/query-product.dto'
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  ParseIntPipe,
+} from "@nestjs/common";
+import { JwtAuthGuard } from "src/common/guards/jwt-auth.guard";
+import { RolesGuard } from "src/common/guards/roles.guard";
+import { Roles } from "src/common/decorators/roles.decorator";
+import { ProductsService } from "./products.service";
+import { CreateProductDto } from "./dto/create-product.dto";
+import { QueryProductDto } from "./dto/query-product.dto";
 
-@Controller('products')
+@Controller("products")
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get()
   findAll(@Query() query: QueryProductDto) {
-    return this.productsService.findAll(query)
+    return this.productsService.findAll(query);
   }
 
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.findOne(id)
+  @Get(":id")
+  findOne(@Param("id", ParseIntPipe) id: number) {
+    return this.productsService.findOne(id);
   }
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles("admin")
   create(@Body() dto: CreateProductDto) {
-    return this.productsService.create(dto)
+    return this.productsService.create(dto);
   }
 }
 ```
@@ -262,29 +313,36 @@ export class ProductsController {
 
 ```ts
 // dto/create-product.dto.ts
-import { IsString, IsNumber, IsOptional, IsArray, Min, MaxLength } from 'class-validator'
-import { Transform } from 'class-transformer'
+import {
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsArray,
+  Min,
+  MaxLength,
+} from "class-validator";
+import { Transform } from "class-transformer";
 
 export class CreateProductDto {
   @IsString()
   @MaxLength(200)
-  name: string
+  name: string;
 
   @IsNumber()
   @Min(0)
   @Transform(({ value }) => Number(value))
-  price: number
+  price: number;
 
   @IsOptional()
   @IsString()
-  description?: string
+  description?: string;
 
   @IsArray()
   @IsString({ each: true })
-  images: string[]
+  images: string[];
 
   @IsNumber()
-  categoryId: number
+  categoryId: number;
 }
 ```
 
@@ -292,40 +350,56 @@ export class CreateProductDto {
 
 ```ts
 // common/guards/jwt-auth.guard.ts
-import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common'
-import { AuthGuard } from '@nestjs/passport'
+import {
+  Injectable,
+  ExecutionContext,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { AuthGuard } from "@nestjs/passport";
 
 @Injectable()
-export class JwtAuthGuard extends AuthGuard('jwt') {
+export class JwtAuthGuard extends AuthGuard("jwt") {
   canActivate(context: ExecutionContext) {
-    return super.canActivate(context)
+    return super.canActivate(context);
   }
   handleRequest(err: any, user: any) {
-    if (err || !user) throw new UnauthorizedException('Token không hợp lệ')
-    return user
+    if (err || !user) throw new UnauthorizedException("Token không hợp lệ");
+    return user;
   }
 }
 
 // common/decorators/current-user.decorator.ts
-import { createParamDecorator, ExecutionContext } from '@nestjs/common'
+import { createParamDecorator, ExecutionContext } from "@nestjs/common";
 export const CurrentUser = createParamDecorator(
-  (data: unknown, ctx: ExecutionContext) => ctx.switchToHttp().getRequest().user
-)
+  (data: unknown, ctx: ExecutionContext) =>
+    ctx.switchToHttp().getRequest().user,
+);
 ```
 
 ### Response Transform Interceptor
 
 ```ts
 // common/interceptors/transform.interceptor.ts
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common'
-import { map } from 'rxjs/operators'
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from "@nestjs/common";
+import { map } from "rxjs/operators";
 
 @Injectable()
 export class TransformInterceptor implements NestInterceptor {
   intercept(_ctx: ExecutionContext, next: CallHandler) {
-    return next.handle().pipe(
-      map(data => ({ success: true, data, timestamp: new Date().toISOString() }))
-    )
+    return next
+      .handle()
+      .pipe(
+        map((data) => ({
+          success: true,
+          data,
+          timestamp: new Date().toISOString(),
+        })),
+      );
   }
 }
 ```
@@ -334,28 +408,32 @@ export class TransformInterceptor implements NestInterceptor {
 
 ```ts
 // src/main.ts
-import { NestFactory } from '@nestjs/core'
-import { ValidationPipe } from '@nestjs/common'
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
-import { AppModule } from './app.module'
+import { NestFactory } from "@nestjs/core";
+import { ValidationPipe } from "@nestjs/common";
+import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { AppModule } from "./app.module";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule)
+  const app = await NestFactory.create(AppModule);
 
-  app.setGlobalPrefix('api')
-  app.enableCors({ origin: process.env.FRONTEND_URL, credentials: true })
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }))
+  app.setGlobalPrefix("api");
+  app.enableCors({ origin: process.env.FRONTEND_URL, credentials: true });
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
   const config = new DocumentBuilder()
-    .setTitle('Antigravity API')
-    .setVersion('1.0')
+    .setTitle("Antigravity API")
+    .setVersion("1.0")
     .addBearerAuth()
-    .build()
-  SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, config))
+    .build();
+  SwaggerModule.setup(
+    "api/docs",
+    app,
+    SwaggerModule.createDocument(app, config),
+  );
 
-  await app.listen(3001)
+  await app.listen(3001);
 }
-bootstrap()
+bootstrap();
 ```
 
 ---
@@ -382,6 +460,8 @@ FRONTEND_URL="http://localhost:3000"
 
 - [ ] **Frontend**: Tạo page trong đúng route group `(shop)`, `(admin)`, `(account)`
 - [ ] **Frontend**: Server Component mặc định, thêm `'use client'` chỉ khi cần
+- [ ] **Frontend**: Dùng `'use cache'` + `cacheTag()` thay vì `next: { revalidate }` (v16)
+- [ ] **Frontend**: File route guard là `proxy.ts`, KHÔNG phải `middleware.ts` (v16)
 - [ ] **Backend**: Tạo module mới với đủ 4 file: `.module`, `.controller`, `.service`, `dto/`
 - [ ] **Backend**: Import module mới vào `app.module.ts`
 - [ ] **Backend**: DTO luôn dùng class-validator
@@ -395,3 +475,18 @@ FRONTEND_URL="http://localhost:3000"
 - `references/supabase-schema.md` — ERD và schema đầy đủ
 - `references/api-conventions.md` — API naming, pagination, error format
 - `references/auth-flow.md` — JWT refresh token flow chi tiết
+
+## Next.js 16 — Docs chính thức
+
+Khi cần tra cứu chi tiết bất kỳ API nào, fetch docs từ các URL sau:
+
+| Chủ đề                        | URL                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| App Router tổng quan          | https://nextjs.org/docs/app                                              |
+| Caching & `use cache`         | https://nextjs.org/docs/app/guides/caching                               |
+| `proxy.ts` (route protection) | https://nextjs.org/docs/app/api-reference/file-conventions/proxy         |
+| Server Components             | https://nextjs.org/docs/app/getting-started/server-and-client-components |
+| Data Fetching                 | https://nextjs.org/docs/app/getting-started/fetching-data                |
+| Upgrade guide v16             | https://nextjs.org/docs/app/guides/upgrading/version-16                  |
+
+> Nếu không chắc một pattern có còn hợp lệ trong v16 không — fetch URL docs trước, đừng đoán.

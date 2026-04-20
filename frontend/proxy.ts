@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-export function middleware(request: NextRequest) {
+export default function proxy(request: NextRequest) {
   // Using refresh_token as it's an HttpOnly cookie
   const refreshToken = request.cookies.get('refresh_token')?.value
   const pathname = request.nextUrl.pathname
