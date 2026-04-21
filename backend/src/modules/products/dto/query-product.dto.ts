@@ -1,6 +1,7 @@
 import { IsOptional, IsString, IsNumber, IsEnum, Min } from 'class-validator';
-import { Transform, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export enum ProductSortEnum {
   PRICE_ASC = 'price_asc',
@@ -9,21 +10,7 @@ export enum ProductSortEnum {
   BEST_SELLER = 'best_seller',
 }
 
-export class QueryProductDto {
-  @ApiPropertyOptional()
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(1)
-  page?: number = 1;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(1)
-  limit?: number = 20;
-
+export class QueryProductDto extends PaginationDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

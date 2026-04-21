@@ -23,6 +23,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? exception.getResponse()
         : 'Lỗi máy chủ nội bộ';
 
+    if (!(exception instanceof HttpException)) {
+      console.error('Unhandled Exception:', exception);
+    }
+
     response.status(status).json({
       success: false,
       statusCode: status,
